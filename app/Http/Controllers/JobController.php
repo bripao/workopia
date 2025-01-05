@@ -7,13 +7,15 @@ use Illuminate\View\View;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 
 class JobController extends Controller
 {
+    use AuthorizesRequests;
+
     public function index(): View
     {
-        $jobs = Job::all();
+        $jobs = Job::paginate(9);
         return view('jobs/index', compact('jobs'));
     }
 
@@ -24,6 +26,7 @@ class JobController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+
         // Validate the incoming request data
         $validatedData = $request->validate([
             'title' => 'required|string|max:255',
@@ -47,8 +50,9 @@ class JobController extends Controller
         ]);
 
         // Hardcoded user ID
-        //$validatedData['user_id'] = auth()->user()->id;
-        $validatedData['user_id'] = 1;
+        $validatedData['user_id'] = auth()->user()->id;
+
+
 
         // Check for image
         if ($request->hasFile('company_logo')) {
@@ -71,11 +75,17 @@ class JobController extends Controller
 
     public function edit(Job $job): View
     {
+        // Check if the user is authorized
+        $this->authorize('update', $job);
+
         return view('jobs.edit')->with('job', $job);
     }
 
     public function update(Request $request, Job $job): RedirectResponse
     {
+        // Check if the user is authorized
+        $this->authorize('update', $job);
+
         // Validate the incoming request data
         $validatedData = $request->validate([
             'title' => 'required|string|max:255',
@@ -98,7 +108,7 @@ class JobController extends Controller
             'company_website' => 'nullable|url',
         ]);
 
-        $validatedData['user_id'] = 1;
+        $validatedData['user_id'] = auth()->user()->id;
 
         // Check if a file was uploaded
         if ($request->hasFile('company_logo')) {
@@ -123,6 +133,9 @@ class JobController extends Controller
     // @route DELETE /jobs/{id}
     public function destroy(Job $job): RedirectResponse
     {
+        // Check if the user is authorized
+        $this->authorize('delete', $job);
+
         // If there is a company logo, delete it from storage
         if ($job->company_logo) {
             Storage::delete('public/logos/' . $job->company_logo);
@@ -131,6 +144,39 @@ class JobController extends Controller
         // Delete the job
         $job->delete();
 
+        // Check if the request came from the dashboard page
+        if (request()->query('from') === 'dashboard') {
+            return redirect()->route('dashboard.index')->with('success', 'Job listing deleted successfully!');
+        }
+
         return redirect()->route('jobs.index')->with('success', 'Job listing deleted successfully!');
+    }
+
+    public function search(Request $request)
+    {
+        $keywords = strtolower($request->input('keywords'));
+        $location = strtolower($request->input('location'));
+
+        $query = Job::query();
+
+        if ($keywords) {
+            $query->where(function ($q) use ($keywords) {
+                $q->whereRaw('LOWER(title) like ?', ['%' . $keywords . '%'])
+                    ->orWhereRaw('LOWER(description) like ?', ['%' . $keywords . '%']);
+            });
+        }
+
+        if ($location) {
+            $query->where(function ($q) use ($location) {
+                $q->whereRaw('LOWER(address) like ?', ['%' . $location . '%'])
+                    ->orWhereRaw('LOWER(city) like ?', ['%' . $location . '%'])
+                    ->orWhereRaw('LOWER(state) like ?', ['%' . $location . '%'])
+                    ->orWhereRaw('LOWER(zipcode) like ?', ['%' . $location . '%']);
+            });
+        }
+
+        $jobs = $query->paginate(12);
+
+        return view('jobs.index')->with('jobs', $jobs);
     }
 }
